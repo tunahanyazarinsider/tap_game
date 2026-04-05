@@ -7,7 +7,9 @@ Tap to earn, buy buildings, collect income on timers, hire managers, level up, l
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/gameplay_city_framed.png" width="300" alt="TapCity Gameplay">
+  <img src="screenshots/early_game.png" width="280" alt="Early Game">
+  &nbsp;&nbsp;
+  <img src="screenshots/gameplay_city_framed.png" width="280" alt="Developed City">
 </p>
 
 ## Features
