@@ -76,13 +76,18 @@ defaults delete com.example.tapCity
 - Trade-off: spend on levels (active power) vs buildings (passive income)
 - Resets on prestige
 
-### Skills (coins, reset on prestige) — per-run power
-| Skill | Effect | Cost |
-|-------|--------|------|
-| Tap Power | +2 flat damage/lv | 100 × 2^lv |
-| Tap Income | +10% tap money/lv | 200 × 2.5^lv |
-| Combo Duration | +0.5s window/lv | 500 × 3^lv |
-| Speed Boost | -10% prod time/lv | 2000 × 4^lv |
+### Skills (coins, time-based, reset on prestige) — active buffs
+- Each skill is a **timed boost** lasting 60 seconds
+- Pay coins to activate (or reset timer if already active)
+- Cost scales with number of purchases: `baseCost × multiplier^buys`
+- Separates from prestige bonuses (permanent) vs skills (temporary active power)
+
+| Skill | Effect (60s) | Base Cost | Cost Scale |
+|-------|-------------|-----------|------------|
+| Tap Damage | +4 tap power | $100 | × 1.8^buys |
+| Tap Boost | +50% tap income | $200 | × 2.0^buys |
+| Combo Frenzy | +1.5s combo window | $500 | × 2.2^buys |
+| Speed Rush | -30% prod time (1.43x speed) | $2,000 | × 2.5^buys |
 
 ### Star Shop (stars, permanent) — cross-run power
 | Upgrade | Effect | Levels |

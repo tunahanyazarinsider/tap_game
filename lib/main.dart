@@ -605,8 +605,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
   // Onboarding
   int onboardingStep = 0; // 0=not started, 1=tap prompt, 2=buy building, 3=level up, 99=done
   bool panelExpanded = false;
-  // Skills (purchasable, reset on prestige)
-  int skillTapPower = 0, skillTapIncome = 0, skillComboDuration = 0, skillSpeedBoost = 0;
+  // Skills (time-based active buffs, reset on prestige)
+  // Each skill: remaining duration in seconds (0 = inactive), times purchased (for cost scaling)
+  double skillTapPowerTimer = 0, skillTapIncomeTimer = 0, skillComboDurationTimer = 0, skillSpeedBoostTimer = 0;
+  int skillTapPowerBuys = 0, skillTapIncomeBuys = 0, skillComboDurationBuys = 0, skillSpeedBoostBuys = 0;
+  static const double skillDuration = 60.0; // seconds each activation lasts
+  bool get skillTapPowerActive => skillTapPowerTimer > 0;
+  bool get skillTapIncomeActive => skillTapIncomeTimer > 0;
+  bool get skillComboDurationActive => skillComboDurationTimer > 0;
+  bool get skillSpeedBoostActive => skillSpeedBoostTimer > 0;
   double edgeGlowIntensity = 0; // 0-1, based on combo
   double moneyPopScale = 1.0; // briefly scales up on tap
   List<GroundRipple> groundRipples = [];
@@ -678,7 +685,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
     return 1.0 + (combo / 20.0 * 2.0).clamp(0.0, 2.0);
   }
 
-  double get currentTapPower => (baseTapPower + achievementTapBonus + skillTapPower * 2.0) * comboMultiplier * (1.0 + skillTapIncome * 0.1) * reputationTapMultiplier;
+  double get currentTapPower => (baseTapPower + achievementTapBonus + (skillTapPowerActive ? 4.0 : 0.0)) * comboMultiplier * (1.0 + (skillTapIncomeActive ? 0.5 : 0.0)) * reputationTapMultiplier;
 
   int get cityLevel {
     if (totalEarned >= 5000000) return 5;
@@ -834,10 +841,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
       prefs.setInt('dailyStreak', dailyStreak);
       prefs.setString('lastDailyClaimDate', lastDailyClaimDate);
       prefs.setInt('onboardingStep', onboardingStep);
-      prefs.setInt('skillTapPower', skillTapPower);
-      prefs.setInt('skillTapIncome', skillTapIncome);
-      prefs.setInt('skillComboDuration', skillComboDuration);
-      prefs.setInt('skillSpeedBoost', skillSpeedBoost);
+      prefs.setDouble('skillTapPowerTimer', skillTapPowerTimer);
+      prefs.setDouble('skillTapIncomeTimer', skillTapIncomeTimer);
+      prefs.setDouble('skillComboDurationTimer', skillComboDurationTimer);
+      prefs.setDouble('skillSpeedBoostTimer', skillSpeedBoostTimer);
+      prefs.setInt('skillTapPowerBuys', skillTapPowerBuys);
+      prefs.setInt('skillTapIncomeBuys', skillTapIncomeBuys);
+      prefs.setInt('skillComboDurationBuys', skillComboDurationBuys);
+      prefs.setInt('skillSpeedBoostBuys', skillSpeedBoostBuys);
     } catch (_) {}
   }
 
@@ -886,10 +897,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
         dailyStreak = prefs.getInt('dailyStreak') ?? 0;
         lastDailyClaimDate = prefs.getString('lastDailyClaimDate') ?? '';
         onboardingStep = prefs.getInt('onboardingStep') ?? 0;
-        skillTapPower = prefs.getInt('skillTapPower') ?? 0;
-        skillTapIncome = prefs.getInt('skillTapIncome') ?? 0;
-        skillComboDuration = prefs.getInt('skillComboDuration') ?? 0;
-        skillSpeedBoost = prefs.getInt('skillSpeedBoost') ?? 0;
+        skillTapPowerTimer = prefs.getDouble('skillTapPowerTimer') ?? 0;
+        skillTapIncomeTimer = prefs.getDouble('skillTapIncomeTimer') ?? 0;
+        skillComboDurationTimer = prefs.getDouble('skillComboDurationTimer') ?? 0;
+        skillSpeedBoostTimer = prefs.getDouble('skillSpeedBoostTimer') ?? 0;
+        skillTapPowerBuys = prefs.getInt('skillTapPowerBuys') ?? 0;
+        skillTapIncomeBuys = prefs.getInt('skillTapIncomeBuys') ?? 0;
+        skillComboDurationBuys = prefs.getInt('skillComboDurationBuys') ?? 0;
+        skillSpeedBoostBuys = prefs.getInt('skillSpeedBoostBuys') ?? 0;
         if (version < 3) { allTimeEarned = totalEarned; allTimeTaps = totalTaps; allTimeHighestCombo = highestCombo; }
 
         // Offline earnings
@@ -920,7 +935,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
       final gm = achievementIncomeMultiplier * reputationIncomeMultiplier;
       for (final b in ownedBuildings) {
         if (b.readyToCollect) continue; // timer paused until collected
-        b.productionTimer += dt;
+        b.productionTimer += dt * (skillSpeedBoostActive ? 1.43 : 1.0); // 30% faster when active
         if (b.productionTimer >= b.info.prodTime) {
           final earned = b.incomePerCycle(gm);
           if (managers.contains(b.info.id)) {
@@ -936,6 +951,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
           }
         }
       }
+
+      // Tick down active skill timers
+      if (skillTapPowerTimer > 0) skillTapPowerTimer = (skillTapPowerTimer - dt).clamp(0, skillDuration);
+      if (skillTapIncomeTimer > 0) skillTapIncomeTimer = (skillTapIncomeTimer - dt).clamp(0, skillDuration);
+      if (skillComboDurationTimer > 0) skillComboDurationTimer = (skillComboDurationTimer - dt).clamp(0, skillDuration);
+      if (skillSpeedBoostTimer > 0) skillSpeedBoostTimer = (skillSpeedBoostTimer - dt).clamp(0, skillDuration);
 
       displayedMoney += (money - displayedMoney) * 0.15;
       playTime += dt;
@@ -1132,7 +1153,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
     money += earned;
     totalEarned += earned;
     combo++;
-    comboTimer = 1.5 + skillComboDuration * 0.5;
+    comboTimer = 1.5 + (skillComboDurationActive ? 1.5 : 0.0);
     totalTaps++;
     // Onboarding: after enough taps to afford first building
     if (onboardingStep == 1 && money >= 50) onboardingStep = 2;
@@ -1378,7 +1399,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
       money = startingCash;
       playerLevel = 1;
       managers = {};
-      skillTapPower = 0; skillTapIncome = 0; skillComboDuration = 0; skillSpeedBoost = 0;
+      skillTapPowerTimer = 0; skillTapIncomeTimer = 0; skillComboDurationTimer = 0; skillSpeedBoostTimer = 0;
+      skillTapPowerBuys = 0; skillTapIncomeBuys = 0; skillComboDurationBuys = 0; skillSpeedBoostBuys = 0;
       totalEarned = 0;
       ownedBuildings = [];
       combo = 0; comboTimer = 0; totalTaps = 0; highestCombo = 0;
@@ -2121,45 +2143,65 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
 
   Widget _buildSkillsTab() {
     final skills = [
-      ('Tap Damage', 'Per-tap power', skillTapPower, '+${skillTapPower * 2}', '+${(skillTapPower + 1) * 2}', 100.0 * pow(2, skillTapPower)),
-      ('Tap Bonus', 'Extra tap income', skillTapIncome, '+${skillTapIncome * 10}%', '+${(skillTapIncome + 1) * 10}%', 200.0 * pow(2.5, skillTapIncome)),
-      ('Combo Window', 'Time before combo resets', skillComboDuration, '+${(skillComboDuration * 0.5).toStringAsFixed(1)}s', '+${((skillComboDuration + 1) * 0.5).toStringAsFixed(1)}s', 500.0 * pow(3, skillComboDuration)),
-      ('Production Speed', 'Faster building timers', skillSpeedBoost, '-${skillSpeedBoost * 10}%', '-${(skillSpeedBoost + 1) * 10}%', 2000.0 * pow(4, skillSpeedBoost)),
+      ('Tap Damage', '+4 tap power for 60s', skillTapPowerTimer, skillTapPowerActive, 100.0 * pow(1.8, skillTapPowerBuys)),
+      ('Tap Boost', '+50% tap income for 60s', skillTapIncomeTimer, skillTapIncomeActive, 200.0 * pow(2.0, skillTapIncomeBuys)),
+      ('Combo Frenzy', '+1.5s combo window for 60s', skillComboDurationTimer, skillComboDurationActive, 500.0 * pow(2.2, skillComboDurationBuys)),
+      ('Speed Rush', '-30% prod time for 60s', skillSpeedBoostTimer, skillSpeedBoostActive, 2000.0 * pow(2.5, skillSpeedBoostBuys)),
     ];
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Column(children: [
-        const Text('SKILLS  (resets each era)', style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 1)),
+        const Text('SKILLS  (timed boosts, resets each era)', style: TextStyle(color: Colors.white24, fontSize: 8, letterSpacing: 1)),
         const SizedBox(height: 6),
-        ...skills.map((s) {
-          final (name, desc, level, current, next, cost) = s;
+        ...skills.asMap().entries.map((entry) {
+          final i = entry.key;
+          final (name, desc, timer, active, cost) = entry.value;
           final canBuy = money >= cost;
+          final secs = timer.ceil();
           return Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: GestureDetector(
-              onTap: canBuy ? () => _buySkill(skills.indexOf(s)) : null,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0D1520),
-                  border: Border.all(color: canBuy ? const Color(0xFF4CAF50).withAlpha(40) : Colors.white.withAlpha(10)),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Row(children: [
-                  // Name + description
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: active ? const Color(0xFF0D1520).withAlpha(230) : const Color(0xFF0D1520),
+                border: Border.all(color: active ? const Color(0xFF4CAF50).withAlpha(80) : (canBuy ? const Color(0xFF4CAF50).withAlpha(40) : Colors.white.withAlpha(10))),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [
-                      Text(name, style: const TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.w700)),
-                      const SizedBox(width: 6),
-                      Text('Lv.$level', style: const TextStyle(color: Colors.white30, fontSize: 9)),
+                      Text(name, style: TextStyle(color: active ? const Color(0xFF4CAF50) : Colors.white70, fontSize: 10, fontWeight: FontWeight.w700)),
+                      if (active) ...[
+                        const SizedBox(width: 6),
+                        Text('${secs}s', style: const TextStyle(color: Color(0xFF4CAF50), fontSize: 9, fontWeight: FontWeight.w700)),
+                      ],
                     ]),
-                    Text('$desc  ($current → $next)', style: const TextStyle(color: Colors.white24, fontSize: 8)),
+                    Text(desc, style: const TextStyle(color: Colors.white24, fontSize: 8)),
                   ])),
-                  // Buy button
-                  GameButton(text: '\$${_fmt(cost)}', onTap: canBuy ? () => _buySkill(skills.indexOf(s)) : null, fontSize: 9, padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+                  GameButton(
+                    text: active ? 'RESET \$${_fmt(cost)}' : '\$${_fmt(cost)}',
+                    onTap: canBuy ? () => _buySkill(i) : null,
+                    color: active ? const Color(0xFFFF9800) : const Color(0xFF4CAF50),
+                    fontSize: 9,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
                 ]),
-              ),
+                if (active)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: timer / skillDuration,
+                        backgroundColor: Colors.white.withAlpha(15),
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+                        minHeight: 3,
+                      ),
+                    ),
+                  ),
+              ]),
             ),
           );
         }),
@@ -2168,15 +2210,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
   }
 
   void _buySkill(int index) {
-    final costs = [100.0 * pow(2, skillTapPower), 200.0 * pow(2.5, skillTapIncome), 500.0 * pow(3, skillComboDuration), 2000.0 * pow(4, skillSpeedBoost)];
+    final costs = [100.0 * pow(1.8, skillTapPowerBuys), 200.0 * pow(2.0, skillTapIncomeBuys), 500.0 * pow(2.2, skillComboDurationBuys), 2000.0 * pow(2.5, skillSpeedBoostBuys)];
     if (money < costs[index]) return;
     setState(() {
       money -= costs[index];
       switch (index) {
-        case 0: skillTapPower++;
-        case 1: skillTapIncome++;
-        case 2: skillComboDuration++;
-        case 3: skillSpeedBoost++;
+        case 0: skillTapPowerTimer = skillDuration; skillTapPowerBuys++;
+        case 1: skillTapIncomeTimer = skillDuration; skillTapIncomeBuys++;
+        case 2: skillComboDurationTimer = skillDuration; skillComboDurationBuys++;
+        case 3: skillSpeedBoostTimer = skillDuration; skillSpeedBoostBuys++;
       }
     });
     _sound.playUpgrade();
