@@ -7,9 +7,9 @@ Tap to earn, buy buildings, collect income on timers, hire managers, level up, l
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/early_game.png" width="280" height="600" alt="Early Game">
+  <img src="screenshots/early_game.png" width="280" height="450" alt="Early Game">
   &nbsp;&nbsp;
-  <img src="screenshots/gameplay_city_framed.png" width="280" height="600" alt="Developed City">
+  <img src="screenshots/gameplay_city_framed.png" width="280" height="450" alt="Developed City">
 </p>
 
 ## Features
