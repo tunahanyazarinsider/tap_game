@@ -44,6 +44,31 @@ defaults delete com.example.tapCity
 - Combo system: rapid taps build combo (up to 3x multiplier, decays after 1.5s + skill bonus)
 - Effects: banknote particles, shockwave rings, combo rings, burst texts, ground ripples, edge glow
 
+### Rhythm Tap (cross-genre: rhythm games)
+- 120 BPM beat clock runs continuously, pulsing dot indicator at top
+- Tap ON the beat: "PERFECT" = 3x tap value, "GOOD" = 1.5x, off-beat = 1x
+- Perfect window: ~60ms, Good window: ~140ms around each beat
+- Chain 10 consecutive PERFECTs → "FLOW STATE" (all taps 5x for 10 seconds, golden border)
+- Rewards skilled rhythmic tapping over random mashing
+
+### Chain Collecting (cross-genre: match-3 games)
+- Collecting a ready building cascades to adjacent ready buildings
+- Each chain link adds +0.5x multiplier (1x → 1.5x → 2x → 2.5x...)
+- Chains spread to left/right neighbors in same row AND same-slot across rows
+- Strategy: let multiple timers fill up, then tap one for a cascade
+- Trade-off: managers auto-collect immediately, preventing chains
+- Max chain = all 12 buildings if perfectly timed
+
+### Power Moves (cross-genre: fighting games)
+- Secret tap sequences on the city canvas trigger special effects
+- Tap zones: 3x3 grid (topLeft/top/topRight/left/center/right/etc.)
+- **SHORYUKEN** (bottom → center → top, <1s): All building timers complete instantly
+- **HADOUKEN** (left → center → right, <0.8s): Collect all ready buildings at 2x
+- **SONIC BOOM** (right → center → left, <0.8s): Speed boost for 15 seconds
+- **SUPER COMBO** (TL → TR → BL → BR, <1.2s): All skills activate for 5 seconds
+- 2-second cooldown between power moves
+- Discoverable — no in-game instructions, players must figure them out
+
 ### 12 Buildings in 2 Rows
 **Back row (behind road, slots 0-5):**
 | Building | Cost | Income/cycle | Timer |

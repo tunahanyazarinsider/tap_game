@@ -557,6 +557,16 @@ class GroundRipple {
   GroundRipple(this.x);
 }
 
+// ─── FIGHTING GAME GESTURE INPUT ─────────────────────────────
+
+enum _GestureZone { topLeft, top, topRight, left, center, right, bottomLeft, bottom, bottomRight }
+
+class _GestureInput {
+  final _GestureZone zone;
+  final double time;
+  _GestureInput(this.zone, this.time);
+}
+
 // ─── GAME SCREEN ─────────────────────────────────────────────
 
 class GameScreen extends StatefulWidget {
@@ -617,6 +627,23 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
   double edgeGlowIntensity = 0; // 0-1, based on combo
   double moneyPopScale = 1.0; // briefly scales up on tap
   List<GroundRipple> groundRipples = [];
+
+  // ─── RHYTHM TAP ──────────────────────────────────────────────
+  static const double rhythmBPM = 120.0;
+  static const double rhythmBeatInterval = 60.0 / rhythmBPM; // 0.5s
+  double rhythmClock = 0; // cycles 0 → beatInterval → 0
+  int rhythmPerfectChain = 0; // consecutive perfects
+  bool rhythmFlowState = false;
+  double rhythmFlowTimer = 0; // remaining flow state seconds
+
+  // ─── FIGHTING GAME COMBOS ────────────────────────────────────
+  List<_GestureInput> _gestureHistory = [];
+  double _gestureCooldown = 0; // cooldown after a power move fires
+  double _powerMoveFlash = 0; // visual flash when a move triggers
+  String? _powerMoveName; // currently displayed power move name
+
+  // ─── CHAIN COLLECTING ────────────────────────────────────────
+  int _chainCount = 0; // current chain length for visual feedback
 
   late AnimationController _tapCtrl;
   late Animation<double> _tapAnim;
@@ -968,6 +995,21 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
 
       if (flashOpacity > 0) flashOpacity = (flashOpacity - dt * 3).clamp(0, 1);
 
+      // Rhythm tap beat clock
+      rhythmClock = (rhythmClock + dt) % rhythmBeatInterval;
+
+      // Flow state countdown
+      if (rhythmFlowTimer > 0) {
+        rhythmFlowTimer -= dt;
+        if (rhythmFlowTimer <= 0) { rhythmFlowState = false; rhythmFlowTimer = 0; }
+      }
+
+      // Fighting combo cooldown + flash
+      if (_gestureCooldown > 0) _gestureCooldown = (_gestureCooldown - dt).clamp(0, 5);
+      if (_powerMoveFlash > 0) _powerMoveFlash = (_powerMoveFlash - dt * 1.5).clamp(0, 1);
+      // Expire old gesture inputs (>1.2s)
+      _gestureHistory.removeWhere((g) => (playTime - g.time) > 1.2);
+
       for (final c in floatingCoins) {
         c.pos = Offset(c.pos.dx + c.dx * dt, c.pos.dy - 120 * dt);
         c.opacity = (c.opacity - dt * 1.8).clamp(0, 1);
@@ -1149,7 +1191,41 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
       }
     }
 
-    final earned = currentTapPower;
+    // ── RHYTHM TAP scoring ──
+    final beatDist = min(rhythmClock, rhythmBeatInterval - rhythmClock);
+    final perfectWindow = rhythmBeatInterval * 0.12; // ~60ms
+    final goodWindow = rhythmBeatInterval * 0.28; // ~140ms
+    double rhythmMult = 1.0;
+    String? rhythmLabel;
+    Color? rhythmColor;
+    if (beatDist <= perfectWindow) {
+      rhythmMult = 3.0;
+      rhythmLabel = 'PERFECT';
+      rhythmColor = const Color(0xFFFFD600);
+      rhythmPerfectChain++;
+      if (rhythmPerfectChain >= 10 && !rhythmFlowState) {
+        rhythmFlowState = true;
+        rhythmFlowTimer = 10.0;
+        burstTexts.add(BurstText(Offset(_screenSize.width / 2, _screenSize.height * 0.3), 'FLOW STATE!', const Color(0xFFFFD600)));
+      }
+    } else if (beatDist <= goodWindow) {
+      rhythmMult = 1.5;
+      rhythmLabel = 'GOOD';
+      rhythmColor = const Color(0xFF81C784);
+      rhythmPerfectChain = 0;
+    } else {
+      rhythmPerfectChain = 0;
+    }
+    if (rhythmFlowState) rhythmMult = max(rhythmMult, 5.0);
+
+    // ── FIGHTING GAME gesture recording ──
+    if (_gestureCooldown <= 0) {
+      final zone = _getGestureZone(pos);
+      _gestureHistory.add(_GestureInput(zone, playTime));
+      _checkPowerMoves(pos);
+    }
+
+    final earned = currentTapPower * rhythmMult;
     money += earned;
     totalEarned += earned;
     combo++;
@@ -1159,8 +1235,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
     if (onboardingStep == 1 && money >= 50) onboardingStep = 2;
     if (combo > highestCombo) highestCombo = combo;
 
+    // Rhythm label feedback
+    if (rhythmLabel != null) {
+      burstTexts.add(BurstText(pos + const Offset(0, -70), rhythmLabel, rhythmColor!));
+    }
+
     // Floating money text — SIZE SCALES WITH EARNED AMOUNT
-    floatingCoins.add(FloatingCoin(pos + const Offset(0, -30), '+\$${_fmt(earned)}', _comboColor));
+    final earnColor = rhythmFlowState ? const Color(0xFFFFD600) : _comboColor;
+    floatingCoins.add(FloatingCoin(pos + const Offset(0, -30), '+\$${_fmt(earned)}', earnColor));
 
     // Trail copies at high combo
     if (combo >= 10) {
@@ -1223,6 +1305,145 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
     _shakeCtrl.forward(from: 0);
     HapticFeedback.lightImpact();
     _sound.playTap(combo);
+  }
+
+  // ─── FIGHTING GAME COMBO SYSTEM ──────────────────────────────
+
+  _GestureZone _getGestureZone(Offset pos) {
+    final w = _screenSize.width;
+    final h = _screenSize.height;
+    final col = pos.dx < w * 0.33 ? 0 : (pos.dx < w * 0.66 ? 1 : 2);
+    final row = pos.dy < h * 0.33 ? 0 : (pos.dy < h * 0.66 ? 1 : 2);
+    const zones = [
+      [_GestureZone.topLeft, _GestureZone.top, _GestureZone.topRight],
+      [_GestureZone.left, _GestureZone.center, _GestureZone.right],
+      [_GestureZone.bottomLeft, _GestureZone.bottom, _GestureZone.bottomRight],
+    ];
+    return zones[row][col];
+  }
+
+  void _checkPowerMoves(Offset pos) {
+    if (_gestureHistory.length < 3) return;
+    final recent = _gestureHistory.toList();
+    final zones = recent.map((g) => g.zone).toList();
+    final len = zones.length;
+
+    // SHORYUKEN: bottom → center → top (within 1s) — complete all timers
+    if (len >= 3 && zones[len - 3] == _GestureZone.bottom && zones[len - 2] == _GestureZone.center && zones[len - 1] == _GestureZone.top) {
+      if (recent[len - 1].time - recent[len - 3].time < 1.0) {
+        _firePowerMove('SHORYUKEN!', const Color(0xFFFF6D00), pos);
+        for (final b in ownedBuildings) {
+          if (!b.readyToCollect) {
+            b.productionTimer = b.info.prodTime;
+            b.readyToCollect = true;
+            b.pendingMoney = b.incomePerCycle(achievementIncomeMultiplier * reputationIncomeMultiplier);
+          }
+        }
+        return;
+      }
+    }
+
+    // HADOUKEN: left → center → right (within 0.8s) — collect all at 2x
+    if (len >= 3 && zones[len - 3] == _GestureZone.left && zones[len - 2] == _GestureZone.center && zones[len - 1] == _GestureZone.right) {
+      if (recent[len - 1].time - recent[len - 3].time < 0.8) {
+        _firePowerMove('HADOUKEN!', const Color(0xFF42A5F5), pos);
+        double total = 0;
+        for (final b in ownedBuildings) {
+          if (b.readyToCollect) {
+            total += b.pendingMoney * 2;
+            b.readyToCollect = false;
+            b.pendingMoney = 0;
+            b.productionTimer = 0;
+          }
+        }
+        if (total > 0) { money += total; totalEarned += total; }
+        return;
+      }
+    }
+
+    // SONIC BOOM: right → center → left (within 0.8s) — 50% cost reduction 15s
+    if (len >= 3 && zones[len - 3] == _GestureZone.right && zones[len - 2] == _GestureZone.center && zones[len - 1] == _GestureZone.left) {
+      if (recent[len - 1].time - recent[len - 3].time < 0.8) {
+        _firePowerMove('SONIC BOOM!', const Color(0xFF00E5FF), pos);
+        // Activate speed boost skill for free as the reward
+        skillSpeedBoostTimer = 15.0;
+        return;
+      }
+    }
+
+    // SUPER COMBO: TL → TR → BL → BR (within 1.2s) — 10x tap power for 5s
+    if (len >= 4) {
+      final last4 = zones.sublist(len - 4);
+      if (last4[0] == _GestureZone.topLeft && last4[1] == _GestureZone.topRight && last4[2] == _GestureZone.bottomLeft && last4[3] == _GestureZone.bottomRight) {
+        if (recent[len - 1].time - recent[len - 4].time < 1.2) {
+          _firePowerMove('SUPER COMBO!', const Color(0xFFFF4081), pos);
+          // Grant all active skills for 5s
+          skillTapPowerTimer = max(skillTapPowerTimer, 5.0);
+          skillTapIncomeTimer = max(skillTapIncomeTimer, 5.0);
+          skillComboDurationTimer = max(skillComboDurationTimer, 5.0);
+          skillSpeedBoostTimer = max(skillSpeedBoostTimer, 5.0);
+          return;
+        }
+      }
+    }
+  }
+
+  void _firePowerMove(String name, Color color, Offset pos) {
+    _gestureHistory.clear();
+    _gestureCooldown = 2.0; // 2s cooldown between power moves
+    _powerMoveFlash = 1.0;
+    _powerMoveName = name;
+    burstTexts.add(BurstText(Offset(_screenSize.width / 2, _screenSize.height * 0.35), name, color));
+    flashOpacity = 0.5;
+    HapticFeedback.heavyImpact();
+    _sound.playPrestige(); // big sound for power moves
+  }
+
+  // ─── CHAIN COLLECTING ────────────────────────────────────────
+
+  void _collectWithChain(OwnedBuilding b, {double chainMult = 1.0, int depth = 0}) {
+    if (!b.readyToCollect) return;
+    final earned = b.pendingMoney * chainMult;
+    money += earned;
+    totalEarned += earned;
+    b.readyToCollect = false;
+    b.pendingMoney = 0;
+    b.productionTimer = 0;
+    _chainCount = depth;
+
+    // Visual feedback
+    if (_screenSize.width > 0) {
+      final label = chainMult > 1.0 ? 'CHAIN x${chainMult.toStringAsFixed(1)}! +\$${_fmt(earned)}' : '+\$${_fmt(earned)}';
+      final color = chainMult > 2.0 ? const Color(0xFFFFD600) : (chainMult > 1.0 ? const Color(0xFFFF9800) : const Color(0xFF4CAF50));
+      burstTexts.add(BurstText(Offset(_screenSize.width / 2, _screenSize.height * 0.35 + depth * 25), label, color));
+    }
+
+    // Find adjacent ready buildings and chain to them
+    if (depth < 11) { // max 12 buildings
+      final row = b.info.row;
+      final rowBuildings = allBuildings.where((i) => i.row == row).toList();
+      final slotIndex = rowBuildings.indexWhere((i) => i.id == b.info.id);
+      // Check left and right neighbors in same row
+      for (final offset in [-1, 1]) {
+        final neighborIdx = slotIndex + offset;
+        if (neighborIdx < 0 || neighborIdx >= rowBuildings.length) continue;
+        final neighborInfo = rowBuildings[neighborIdx];
+        final neighbor = ownedBuildings.where((o) => o.info.id == neighborInfo.id && o.readyToCollect).firstOrNull;
+        if (neighbor != null) {
+          _collectWithChain(neighbor, chainMult: chainMult + 0.5, depth: depth + 1);
+        }
+      }
+      // Check same-slot building in opposite row
+      final otherRow = row == 0 ? 1 : 0;
+      final otherRowBuildings = allBuildings.where((i) => i.row == otherRow).toList();
+      if (slotIndex < otherRowBuildings.length) {
+        final crossInfo = otherRowBuildings[slotIndex];
+        final cross = ownedBuildings.where((o) => o.info.id == crossInfo.id && o.readyToCollect).firstOrNull;
+        if (cross != null) {
+          _collectWithChain(cross, chainMult: chainMult + 0.5, depth: depth + 1);
+        }
+      }
+    }
   }
 
   void _collectGoldenCoin(GoldenCoin gc, Offset pos) {
@@ -1292,15 +1513,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
   void _collectBuilding(OwnedBuilding b) {
     if (!b.readyToCollect) return;
     setState(() {
-      money += b.pendingMoney;
-      totalEarned += b.pendingMoney;
-      b.readyToCollect = false;
-      b.pendingMoney = 0;
-      b.productionTimer = 0;
+      _chainCount = 0;
+      _collectWithChain(b);
     });
     _sound.playBuy(); // ka-ching
-    if (_screenSize.width > 0) {
-      burstTexts.add(BurstText(Offset(_screenSize.width / 2, _screenSize.height * 0.4), '+\$${_fmt(b.pendingMoney > 0 ? b.pendingMoney : b.incomePerCycle(achievementIncomeMultiplier * reputationIncomeMultiplier))}', const Color(0xFF4CAF50)));
+    if (_chainCount > 0) {
+      // Extra sound for chain
+      _sound.playUpgrade();
     }
   }
 
@@ -1480,6 +1699,38 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
 
               if (flashOpacity > 0) IgnorePointer(child: Container(color: Colors.white.withAlpha((flashOpacity * 255).toInt()))),
 
+              // Rhythm beat indicator (pulsing dot at top center)
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 6,
+                left: 0, right: 0,
+                child: IgnorePointer(child: Center(child: _buildRhythmIndicator())),
+              ),
+
+              // Power move name display
+              if (_powerMoveFlash > 0)
+                Positioned(
+                  top: _screenSize.height * 0.25,
+                  left: 0, right: 0,
+                  child: IgnorePointer(child: Center(child: Opacity(
+                    opacity: _powerMoveFlash.clamp(0, 1),
+                    child: Text(_powerMoveName ?? '', style: TextStyle(
+                      color: Colors.white, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 4,
+                      shadows: [
+                        const Shadow(color: Colors.black87, blurRadius: 8, offset: Offset(2, 2)),
+                        Shadow(color: Colors.orangeAccent.withAlpha(180), blurRadius: 30),
+                      ],
+                    )),
+                  ))),
+                ),
+
+              // Flow state golden border glow
+              if (rhythmFlowState)
+                IgnorePointer(child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFFFFD600).withAlpha(100), width: 3),
+                  ),
+                )),
+
               // Edge glow vignette during combo
               if (edgeGlowIntensity > 0.05)
                 IgnorePointer(child: CustomPaint(
@@ -1571,6 +1822,29 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin, 
   double get _levelProgress {
     if (playerLevel >= 50) return 1.0;
     return (money / levelUpCost).clamp(0.0, 1.0);
+  }
+
+  Widget _buildRhythmIndicator() {
+    // Pulsing circle that expands/contracts with the beat
+    final beatPhase = rhythmClock / rhythmBeatInterval; // 0→1
+    final pulse = sin(beatPhase * pi * 2).abs(); // 0→1→0 each beat
+    final size = 6.0 + pulse * 6.0;
+    final opacity = rhythmFlowState ? 1.0 : (0.3 + pulse * 0.4);
+    final color = rhythmFlowState ? const Color(0xFFFFD600) : Colors.white;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: size, height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: color.withAlpha((opacity * 255).toInt()),
+          boxShadow: rhythmFlowState ? [BoxShadow(color: const Color(0xFFFFD600).withAlpha(100), blurRadius: 12)] : [],
+        ),
+      ),
+      if (rhythmFlowState) ...[
+        const SizedBox(width: 4),
+        Text('${rhythmFlowTimer.ceil()}s', style: const TextStyle(color: Color(0xFFFFD600), fontSize: 8, fontWeight: FontWeight.w700)),
+      ],
+    ]);
   }
 
   Widget _buildHud(BuildContext context) {
